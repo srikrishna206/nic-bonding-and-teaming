@@ -1,0 +1,119 @@
+---
+- name: Configuring bonding and teaming
+  hosts: srikrishnacentossrv1
+  remote_user: root
+  tasks:
+         -  name: teaming
+            vars:
+                - nmcli_team:
+                       - {conn_name: 'team0', ip4: "192.168.29.162/24", gw4: "192.168.29.1", mode: 'active-backup'}
+                - nmcli_team_slave:
+                       - {conn_name: 'ens37', ifname: 'ens37', master: 'team0'}
+                       - {conn_name: 'ens38', ifname: 'ens38', master: 'team0'}
+            block:
+                 -  name: configuring teaming in linux
+                    nmcli:
+                          type: team
+                          conn_name: '{{item.conn_name}}'
+                          ip4: '{{item.ip4}}'
+                          gw4: '{{item.gw4}}'
+                          mode: '{{item.mode}}'
+                          autoconnect: yes
+                          state: present
+                    with_items: '{{nmcli_team}}'
+                 -  name: slave configuration in linux
+                    nmcli:
+                          type: team-slave
+                          conn_name: '{{item.conn_name}}'
+                          ifname: '{{item.ifname}}'
+                          master: '{{item.master}}'
+                          state: present
+                    with_items: '{{nmcli_team_slave}}'
+            when: ansible_facts['distribution'] == "RedHat"
+            notify: restart network service in redhat
+         -  name: bonding in ubunu
+            vars:
+                - nmcli_bond_slave:
+                       - {conn_name: 'ens37', ifname: 'ens37', master: 'bond0'}
+                       - {conn_name: 'ens38', ifname: 'ens38', master: 'bond0'}
+            block:
+                 - name: install NetworkManager
+                   apt:
+                       name: network-manager
+                       state: present
+                 - name:  interface configuration in ubuntu
+                   copy:
+                        dest: /etc/netplan/01-netcfg.yaml
+                        content: |
+                              network:
+                                  version: 2
+                                  ethernets:
+                                     ens37:
+                                        dhcp4: no
+                                     ens38:
+                                        dhcp4: no
+                                  bonds:
+                                      bond0:
+                                         dhcp4: no
+                                         interfaces:
+                                              - ens37
+                                              - ens38
+                                         addresses:
+                                              - 192.168.29.163/24
+                                         gateway4: 192.168.29.1
+                                         nameservers:
+                                             addresses:
+                                                - 8.8.8.8
+                                                - 8.8.4.4
+                 -  name: slave configuration ubuntu
+                    nmcli:
+                          type: bond-slave
+                          conn_name: '{{item.conn_name}}'
+                          ifname: '{{item.ifname}}'
+                          master: '{{item.master}}'
+                          state: present
+                    with_items: '{{nmcli_bond_slave}}'
+            when: ansible_facts['distribution'] == "Ubuntu"
+            notify: restart network service in ubuntu
+         -  name: bonding configuration in centOs
+            vars:
+                - nmcli_bond:
+                       - {conn_name: 'bond0', ip4: "192.168.29.164/24", gw4: "192.168.29.1", mode: 'active-backup'}
+                - nmcli_bond_slave:
+                       - {conn_name: 'ens37', ifname: 'ens37', master: 'bond0'}
+                       - {conn_name: 'ens38', ifname: 'ens38', master: 'bond0'}
+            block:
+                 -  name:  interface configuration centOs
+                    nmcli:
+                          type: bond
+                          conn_name: '{{item.conn_name}}'
+                          ip4: '{{item.ip4}}'
+                          gw4: '{{item.gw4}}'
+                          mode: '{{item.mode}}'
+                          autoconnect: yes
+                          miimon: 100
+                          state: present
+                    with_items: '{{nmcli_bond}}'
+                 -  name: slave configuration in centOs
+                    nmcli:
+                          type: bond-slave
+                          conn_name: '{{item.conn_name}}'
+                          ifname: '{{item.ifname}}'
+                          master: '{{item.master}}'
+                          state: present
+                    with_items: '{{nmcli_bond_slave}}'
+            when: ansible_facts['distribution'] == "CentOS"
+            notify: restart network service in centos
+  handlers:
+             -  name: restart network service in redhat
+                service:
+                      name: network
+                      state: restarted
+                when: ansible_facts['distribution'] == "RedHat"
+             -  name: restart network service in centos
+                service:
+                      name: NetworkManager
+                      state: restarted
+                when: ansible_facts['distribution'] == "CentOS"
+             -  name: restart network service in ubuntu
+                shell: netplan apply
